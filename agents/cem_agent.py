@@ -1,10 +1,8 @@
 from agent import Agent
-from classification_model import build_classification_model, build_binary_classification_model
-from regression_model import build_regression_model
-from policy import Policy, RandomPolicy
+import model_builders as mb
+from policy import DirectPolicy, ValuePolicy
 import numpy as np
 import heapq
-from gym import spaces
 
 
 class CEMAgent(Agent):
@@ -12,8 +10,8 @@ class CEMAgent(Agent):
     """
 
     def __init__(self, observation_space, action_space,
-                 samples_per_iteration=50, steps_per_sample=1000, elite_frac=0.1,
-                 initial_mean=0.0, initial_std=10, Z=0, Z_decay_factor=.9):
+                 samples_per_iteration=50, steps_per_sample=2017, elite_frac=0.1,
+                 initial_mean=0.0, initial_std=10, Z=10, Z_decay_factor=.9, policy_based=True):
         """
         initial_mean: initial mean over input distribution
         initial_std: initial standard deviation over parameter vectors
@@ -21,28 +19,21 @@ class CEMAgent(Agent):
         elite_frac: each batch, select this fraction of the top-performing samples
         """
         super().__init__(observation_space, action_space)
-        if isinstance(action_space, spaces.Discrete):
-            if action_space.n is 2:
-                self.policy_model = build_binary_classification_model(np.prod(observation_space.shape),
-                                                                      dim_multipliers=(6,), activations=('linear',))
-            else:
-                self.policy_model = build_classification_model(np.prod(observation_space.shape), action_space.n,
-                                                               dim_multipliers=(6,), activations=('tanh',))
-        elif isinstance(action_space, spaces.Box):
-            self.policy_model = build_regression_model(np.prod(observation_space.shape), np.prod(action_space.shape),
-                                                       dim_multipliers=(6,), activations=('tanh',))
-        else:
-            raise ValueError("The action_space is of type: {} - which is not supported!".format(type(action_space)))
 
-        self.policy = Policy(action_space, self.policy_model.predict)
+        if policy_based:
+            self.model = mb.build_policy_model(observation_space, action_space)
+            self.policy = DirectPolicy(action_space, self.model)
+        else:
+            self.model = mb.build_q_model(observation_space, action_space)
+            self.policy = ValuePolicy(action_space, self.model)
 
         self.elite_frac = elite_frac
         self.elite_num = round(samples_per_iteration * elite_frac)
         self.elite = []
         self.reset_elite_set()
 
-        self.mu = [np.zeros(w.shape) + initial_mean for w in self.policy_model.get_weights()]
-        self.std = [np.ones(w.shape) * np.sqrt(np.square(initial_std) + Z) for w in self.policy_model.get_weights()]
+        self.mu = [np.zeros(w.shape) + initial_mean for w in self.model.get_weights()]
+        self.std = [np.ones(w.shape) * np.sqrt(np.square(initial_std) + Z) for w in self.model.get_weights()]
 
         self.steps_per_sample = steps_per_sample
         self.samples_per_iteration = samples_per_iteration
@@ -53,19 +44,19 @@ class CEMAgent(Agent):
         self.Z = Z
         self.Z_decay_factor = Z_decay_factor
 
-    def save_weights(self, **args):
+    def save_weights(self, filepath, overwrite=True):
         self.update_theta_distribution()
-        self.policy_model.set_weights(self.mu)
-        self.policy_model.save_weights(**args)
+        self.model.set_weights(self.mu)
+        self.model.save_weights(filepath, overwrite)
 
     def reset_elite_set(self):
-        self.elite = [(-np.inf, i, self.policy_model.get_weights()) for i in range(self.elite_num)]
+        self.elite = [(-np.inf, i, self.model.get_weights()) for i in range(self.elite_num)]
         heapq.heapify(self.elite)
 
     def update_theta_distribution(self):
         self.Z *= self.Z_decay_factor
-        self.mu = [np.zeros(w.shape) for w in self.policy_model.get_weights()]
-        self.std = [np.ones(w.shape) for w in self.policy_model.get_weights()]
+        self.mu = [np.zeros(w.shape) for w in self.model.get_weights()]
+        self.std = [np.ones(w.shape) for w in self.model.get_weights()]
         # sample mean
         for el in self.elite:
             for layer, wghts in enumerate(el[2]):
@@ -89,8 +80,8 @@ class CEMAgent(Agent):
         heapq.heappushpop(self.elite,
                           (self.current_sample_acc_reward / max(self.done_count, 1),
                            self.current_steps / self.steps_per_sample,
-                           self.policy_model.get_weights()))
-        self.policy_model.set_weights(self.draw_theta())
+                           self.model.get_weights()))
+        self.model.set_weights(self.draw_theta())
 
     def act(self, state, prev_reward, prev_done):
         self.current_steps += 1
