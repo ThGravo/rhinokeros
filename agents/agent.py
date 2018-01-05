@@ -1,5 +1,5 @@
 from collections import deque as DequeMemory
-from policy import RandomPolicy
+from policies.policy import RandomPolicy
 
 
 class Agent(object):
