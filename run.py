@@ -1,9 +1,9 @@
 import gym
-from agent import Agent
+from agents.agent import Agent
 import argparse
 
 
-def run(env_name='Ant-v1', num_steps=1000):
+def run(env_name='Ant-v2', num_steps=1000):
     env = gym.make(env_name)
     agent = Agent(env.observation_space, env.action_space)
 
